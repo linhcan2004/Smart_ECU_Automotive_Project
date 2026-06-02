@@ -1,0 +1,20 @@
+# STM32CubeIDE / Eclipse junk files
+Core/Src/*.o
+Core/Startup/*.o
+Debug/
+Release/
+*.local
+*.mxproject
+.settings/
+
+# Python junk files
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+ENV/
+
+# OS temporary files
+.DS_Store
+Thumbs.db
