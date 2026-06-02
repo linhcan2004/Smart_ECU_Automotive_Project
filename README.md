@@ -21,7 +21,7 @@ Automotive_Root/
 │   │       ├── Common/             <-- Tầng kết nối dữ liệu chung giữa các thành viên
 │   │       │   └── app_bsp.h       <-- Định nghĩa Struct dữ liệu xe, Khóa Mutex, Hàng đợi Queue
 │   │       │
-│   │       ├── Tang_Kien_Truuc/    <-- PHẦN VIỆC CỦA THÀNH VIÊN 01 (Kiến trúc & An toàn)
+│   │       ├── Tang_Kien_Truc/    <-- PHẦN VIỆC CỦA THÀNH VIÊN 01 (Kiến trúc & An toàn)
 │   │       │   ├── app_core.h      <-- Khai báo các Task FreeRTOS
 │   │       │   ├── app_core.c      <-- Viết logic khởi chạy các Task FreeRTOS mẫu
 │   │       │   ├── mpu6500.h       <-- Khai báo các hàm đọc cảm biến quán tính IMU
