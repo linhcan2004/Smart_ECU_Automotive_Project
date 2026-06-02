@@ -2,8 +2,8 @@ Cấu trúc thư mục của dự án
 
 ```text
 Automotive_Root/
-├── .gitignore                      <-- File ẩn chặn up file rác lên GitHub
-├── README.md                       <-- File hướng dẫn dự án hiển thị trên GitHub
+├── .gitignore                     
+├── README.md              
 │
 ├── ECU_Project/                   <-- 1. THƯ MỤC DỰ ÁN NHÚNG STM32 (Trong STM32CubeIDE)
 │   ├── Includes/                   <-- (Mặc định) Thư mục ảo quản lý đường dẫn của IDE
