@@ -47,6 +47,7 @@ static void StartControlTask(void *argument);
 static void StartDiagnosticTask(void *argument);
 
 void App_Core_Init(void) {
+    MPU6500_Init();
     uartMutexHandle = osMutexNew(&uartMutex_attributes);
     controlQueueHandle = osMessageQueueNew(QUEUE_LEN, QUEUE_ITEM_SIZE, &controlQueue_attributes);
 
