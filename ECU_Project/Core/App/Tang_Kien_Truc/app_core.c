@@ -3,6 +3,9 @@
 #include "mpu6500.h"
 #include "line_sensor.h"
 #include "control_pid.h"
+#include "uds_sm.h"
+#include "encoder.h"
+#include "flash_mem.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -47,7 +50,11 @@ static void StartControlTask(void *argument);
 static void StartDiagnosticTask(void *argument);
 
 void App_Core_Init(void) {
+	Flash_Load_Config();
+	Encoder_Init();
     MPU6500_Init();
+    UDS_Init();
+
     uartMutexHandle = osMutexNew(&uartMutex_attributes);
     controlQueueHandle = osMessageQueueNew(QUEUE_LEN, QUEUE_ITEM_SIZE, &controlQueue_attributes);
 
@@ -245,8 +252,8 @@ void StartDiagnosticTask(void *argument) {
                     position, error, PID_value, enc_left_count, enc_right_count, gyro_p);
             HAL_UART_Transmit(&huart6, (uint8_t*)uart_buf, strlen(uart_buf), 50);
 
-            // 2.Thành viên 02 sau này sẽ nhúng lõi phân tích cú pháp lệnh UDS ISO 14229 tại đây để nhận lệnh chẩn đoán từ máy tính và trả về dữ liệu tương ứng qua UART.
-            // ...
+            // 2. LÕI PHÂN TÍCH CÚ PHÁP UDS:
+            UDS_Process();
 
             osMutexRelease(uartMutexHandle); // Giải phóng khóa sau khi truyền tải xong
         }

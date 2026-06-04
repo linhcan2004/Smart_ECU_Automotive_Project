@@ -1,68 +1,76 @@
 #include "line_sensor.h"
 #include "app_bsp.h"
-#include "control_pid.h"
-#include <stdio.h>
-#include <string.h>
 
-// Cấp phát vật lý các biến thuộc tầng cảm biến line
+// Định nghĩa vật lý các biến mảng toàn cục được khai báo trong app_bsp.h
 uint16_t adc_values[8] = {0};
 uint8_t is_calibrated = 0;
 uint8_t black_count = 0;
-uint16_t cal_min[8] = {4095,4095,4095,4095,4095,4095,4095,4095};
-uint16_t cal_max[8] = {0,0,0,0,0,0,0,0};
+uint16_t cal_min[8] = {4095, 4095, 4095, 4095, 4095, 4095, 4095, 4095};
+uint16_t cal_max[8] = {0, 0, 0, 0, 0, 0, 0, 0};
 
-void Refresh_ADC(void) {
-    if (__HAL_ADC_GET_FLAG(&hadc1, ADC_FLAG_OVR)) {
-        __HAL_ADC_CLEAR_FLAG(&hadc1, ADC_FLAG_OVR);
-    }
-    HAL_ADC_Stop_DMA(&hadc1);
-    HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc_values, 8);
-    osDelay(2); // Dùng osDelay của RTOS để nhường CPU trong 2ms chờ ADC quét xong
-}
-
+// Hàm tự động quét lấy mẫu bề mặt sa bàn để hiệu chuẩn cảm biến
 void Auto_Calibration(void) {
-    HAL_GPIO_WritePin(GPIOA, LD2_Pin, GPIO_PIN_SET);
-    uint32_t start_time = HAL_GetTick();
-    uint8_t  phase = 0;         
-    uint32_t phase_time = start_time;
+    // 1. Bật nguồn dàn LED hồng ngoại QTR-8A qua chân PB13
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_13, GPIO_PIN_SET);
+    osDelay(20); // Chờ điện áp LED ổn định
 
-    while (HAL_GetTick() - start_time < 5000) {
-        HAL_IWDG_Refresh(&hiwdg); // Nuôi chó liên tục trong vòng lặp 5s tránh bị sập Reset
-        Refresh_ADC();
+    // 2. Kích hoạt bộ chuyển đổi ADC1 quét liên tục bằng DMA đẩy vào mảng adc_values
+    HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc_values, 8);
 
+    // 3. Vòng lặp hiệu chuẩn chạy trong 3 giây
+    // Trong thời gian này, người giữ xe sẽ vuốt dàn mắt qua lại giữa vạch đen và nền trắng
+    uint32_t startTime = HAL_GetTick();
+    while (HAL_GetTick() - startTime < 3000) {
         for (int i = 0; i < 8; i++) {
             if (adc_values[i] < cal_min[i]) cal_min[i] = adc_values[i];
             if (adc_values[i] > cal_max[i]) cal_max[i] = adc_values[i];
         }
-
-        if (HAL_GetTick() - phase_time >= 500) {
-            phase = !phase;
-            phase_time = HAL_GetTick();
-        }
-
-        if (phase == 0) Motor_Drive(+180, -180);  
-        else            Motor_Drive(-180, +180);  
+        osDelay(10); // Chu kỳ lấy mẫu hiệu chuẩn 10ms
     }
-
-    Motor_Drive(0, 0); 
-    HAL_GPIO_WritePin(GPIOA, LD2_Pin, GPIO_PIN_RESET);
-
-    sprintf(uart_buf, "CALIBRATION DONE.\r\n");
-    HAL_UART_Transmit(&huart6, (uint8_t*)uart_buf, strlen(uart_buf), 100);
 }
 
+// Hàm làm sạch/đợi dữ liệu ADC (Vì DMA chạy ngầm liên tục nên hàm này đóng vai trò bộ lọc ổn định)
+void Refresh_ADC(void) {
+    // Dữ liệu trong mảng adc_values tự động cập nhật liên tục nhờ phần cứng DMA.
+    // Thêm một khoảng trễ cực ngắn để tránh hiện tượng đọc dính nhiễu chuyển mạch.
+    asm("NOP");
+}
+
+// Hàm tính toán vị trí tâm xe dựa trên thuật toán trung bình có trọng số
 int Read_Position(void) {
-    uint32_t sum_weighted = 0;
+    uint32_t avg = 0;
     uint32_t sum = 0;
-    black_count = 0; 
+    uint8_t on_line = 0;
+    black_count = 0;
 
     for (int i = 0; i < 8; i++) {
-        if (adc_values[i] > 3500) {
-            sum          += (uint32_t)adc_values[i];
-            sum_weighted += (uint32_t)adc_values[i] * (uint32_t)(i * 1000);
-            black_count++; 
+        long value = adc_values[i];
+
+        // Chuẩn hóa dữ liệu về khoảng 0 (Trắng) đến 1000 (Đen) dựa trên cal_min/max
+        if (cal_max[i] != cal_min[i]) {
+            value = ((value - cal_min[i]) * 1000) / (cal_max[i] - cal_min[i]);
         }
+
+        // Ràng buộc giới hạn an toàn
+        if (value < 0) value = 0;
+        if (value > 1000) value = 1000;
+
+        // Đếm số mắt đang thực sự đè lên vạch đen (Ngưỡng điện áp chuẩn hóa > 500)
+        if (value > 500) {
+            black_count++;
+            on_line = 1;
+        }
+
+        // Áp trọng số vị trí tăng dần từ 0 (Mắt ngoài cùng bên trái) đến 7000 (Mắt ngoài cùng bên phải)
+        // Khoảng cách giữa các mắt đều nhau 1000 đơn vị, Tâm xe hoàn hảo sẽ là 3500
+        avg += (uint32_t)(value * (i * 1000));
+        sum += (uint32_t)value;
     }
-    if (sum == 0) return -1; 
-    return (int)(sum_weighted / sum);
+
+    // TÌNH HUỐNG KHẨN CẤP: Nếu tất cả các mắt đều đọc được màu trắng (Xe mất dấu đường line hoàn toàn)
+    if (on_line == 0) {
+        return -1; // Trả về -1 để kích hoạt Khối xử lý ngã rẽ/quay compa tìm vạch trong app_core.c
+    }
+
+    return (int)(avg / sum);
 }

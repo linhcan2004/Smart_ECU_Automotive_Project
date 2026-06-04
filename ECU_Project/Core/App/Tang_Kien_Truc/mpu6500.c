@@ -5,6 +5,8 @@ uint8_t mpu_status = 0;
 int16_t gyro_z_offset = 0;
 
 void MPU6500_Init(void) {
+    int32_t sg = 0;
+
     // Kiểm tra xem thiết bị I2C đã sẵn sàng chưa (Địa chỉ 0xD0)
     if (HAL_I2C_IsDeviceReady(&hi2c1, 0xD0, 3, 100) == HAL_OK) {
         mpu_status = 1;
