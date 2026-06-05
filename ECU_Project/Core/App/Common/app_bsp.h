@@ -22,6 +22,15 @@ extern volatile uint8_t inject_error;
 extern uint8_t is_calibrated;
 extern uint8_t mpu_status;
 extern uint8_t black_count;
+extern volatile uint8_t is_calibrating;
+typedef enum {
+    CAR_STATE_IDLE       = 0,  // Đứng yên chờ lệnh
+    CAR_STATE_CALIBRATE  = 1,  // Đang tự động học sa bàn
+    CAR_STATE_TURNING    = 2,  // Đang xoay compa ôm cua tại ngã rẽ
+    CAR_STATE_RUNNING    = 3   // Đang tính toán PID bám line đường thẳng
+} CarState_t;
+
+extern volatile CarState_t car_state;
 
 // Biến cảm biến QTR và PID
 extern uint16_t adc_values[8];

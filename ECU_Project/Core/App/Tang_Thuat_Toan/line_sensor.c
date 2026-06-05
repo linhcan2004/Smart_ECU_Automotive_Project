@@ -4,6 +4,8 @@
 #include <stdio.h>
 #include <string.h>
 
+volatile uint8_t is_calibrating = 0;
+
 // Cấp phát vật lý các biến thuộc tầng cảm biến line
 uint16_t adc_values[8] = {0};
 uint8_t is_calibrated = 0;
@@ -17,10 +19,11 @@ void Refresh_ADC(void) {
     }
     HAL_ADC_Stop_DMA(&hadc1);
     HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc_values, 8);
-    osDelay(2); // Dùng osDelay của RTOS để nhường CPU trong 2ms chờ ADC quét xong
+    while (__HAL_ADC_GET_FLAG(&hadc1, ADC_FLAG_EOC) == RESET) {}
 }
 
 void Auto_Calibration(void) {
+	is_calibrating = 1;
     HAL_GPIO_WritePin(GPIOA, LD2_Pin, GPIO_PIN_SET);
     uint32_t start_time = HAL_GetTick();
     uint8_t  phase = 0;         
@@ -46,7 +49,7 @@ void Auto_Calibration(void) {
 
     Motor_Drive(0, 0); 
     HAL_GPIO_WritePin(GPIOA, LD2_Pin, GPIO_PIN_RESET);
-
+    is_calibrating = 0;
     sprintf(uart_buf, "CALIBRATION DONE.\r\n");
     HAL_UART_Transmit(&huart6, (uint8_t*)uart_buf, strlen(uart_buf), 100);
 }
