@@ -19,7 +19,15 @@ void Refresh_ADC(void) {
     }
     HAL_ADC_Stop_DMA(&hadc1);
     HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc_values, 8);
-    while (__HAL_ADC_GET_FLAG(&hadc1, ADC_FLAG_EOC) == RESET) {}
+
+    // Bẫy phá khóa vô hạn bảo vệ RTOS
+    uint32_t timeout_counter = 0;
+    while (__HAL_ADC_GET_FLAG(&hadc1, ADC_FLAG_EOC) == RESET) {
+        timeout_counter++;
+        if (timeout_counter > 1500) {
+            break; // Quá thời gian, chủ động thoát ra bảo vệ hệ thống sống sót
+        }
+    }
 }
 
 void Auto_Calibration(void) {

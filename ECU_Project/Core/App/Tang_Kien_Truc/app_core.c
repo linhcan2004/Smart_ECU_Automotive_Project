@@ -151,13 +151,6 @@ void StartControlTask(void *argument) {
 
             Refresh_ADC();
             int position = Read_Position();
-            if (osMutexAcquire(uartMutexHandle, 0) == osOK) {
-                sprintf(uart_buf, "ADC: %d %d %d %d %d %d %d %d | pos=%d\r\n",
-                    adc_values[0], adc_values[1], adc_values[2], adc_values[3],
-                    adc_values[4], adc_values[5], adc_values[6], adc_values[7], position);
-                HAL_UART_Transmit(&huart6, (uint8_t*)uart_buf, strlen(uart_buf), 50);
-                osMutexRelease(uartMutexHandle);
-            }
             if (position != -1) {
                 // Đẩy lùi lịch sử trạng thái (Shift Register)
                 for (int i = 4; i > 0; i--) {
