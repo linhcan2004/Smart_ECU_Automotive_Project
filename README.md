@@ -41,7 +41,7 @@ Automotive_Root/
 │   │           ├── encoder.h       <-- Khai báo hàm đọc xung bánh xe
 │   │           ├── encoder.c       <-- Viết code đọc Timer ở chế độ Encoder Mode để tính vận tốc
 │   │           ├── line_sensor.h   <-- Khai báo hàm đọc mắt hồng ngoại
-│   │           └── line_sensor.c   <-- Viết code đọc trạng thái dãy 5 cảm biến hồng ngoại
+│   │           └── line_sensor.c   <-- Viết code đọc trạng thái dãy 8 cảm biến hồng ngoại
 │   └── ECU_Project.ioc            <-- (Mặc định) File giao diện cấu hình chân chip
 │
 └── Host_PC_TesterTool/             <-- 2. THƯ MỤC PHẦN MỀM PYTHON (Chạy trên máy tính)
