@@ -5,26 +5,30 @@ uint8_t mpu_status = 0;
 int16_t gyro_z_offset = 0;
 
 void MPU6500_Init(void) {
-    int32_t sg = 0;
+    // 1. Kiểm tra xem thiết bị MPU6500 có thực sự kết nối vật lý và phản hồi không
+    if (HAL_I2C_IsDeviceReady(&hi2c1, 0xD0, 3, 50) == HAL_OK) {
+        mpu_status = 1; // Đánh dấu cảm biến hoạt động khỏe mạnh
 
-    // Kiểm tra xem thiết bị I2C đã sẵn sàng chưa (Địa chỉ 0xD0)
-    if (HAL_I2C_IsDeviceReady(&hi2c1, 0xD0, 3, 100) == HAL_OK) {
-        mpu_status = 1;
-
-        // Thanh ghi 0x6B: Ghi 0x00 để đánh thức MPU6500 thoát khỏi Sleep Mode
+        // Thanh ghi 0x6B: Đánh thức MPU6500 thoát khỏi Sleep Mode
         uint8_t d = 0x00; 
-        HAL_I2C_Mem_Write(&hi2c1, 0xD0, 0x6B, 1, &d, 1, 100);
+        HAL_I2C_Mem_Write(&hi2c1, 0xD0, 0x6B, 1, &d, 1, 50);
 
-        // Thanh ghi 0x1A: Ghi 0x06 để cấu hình bộ lọc thông thấp chống nhiễu gắt
+        // Thanh ghi 0x1A: Cấu hình bộ lọc thông thấp (DLPF) chống nhiễu gắt
         d = 0x06;          
-        HAL_I2C_Mem_Write(&hi2c1, 0xD0, 0x1A, 1, &d, 1, 100);
+        HAL_I2C_Mem_Write(&hi2c1, 0xD0, 0x1A, 1, &d, 1, 50);
 
-        // Vòng lặp lấy mẫu 100 lần trước khi chạy để tính toán bù sai số tĩnh
+        // Vòng lặp lấy mẫu bù sai số tĩnh (Offset)
+        int32_t sg = 0;
         for (int i = 0; i < 100; i++) { 
             sg += Read_Gyro_Z(); 
-            HAL_Delay(5); // Dùng HAL_Delay vì lúc này OS chưa khởi động
+            HAL_Delay(5);
         }
         gyro_z_offset = (int16_t)(sg / 100);
+    }
+    else {
+        // --- BẪY LỖI AN TOÀN CHỦ ĐỘNG ---
+        mpu_status = 0;    // Đánh dấu cảm biến đang bị lỗi/rơi dây
+        gyro_z_offset = 0; // Đặt offset bằng 0 để tránh tính toán sai lệch
     }
 }
 

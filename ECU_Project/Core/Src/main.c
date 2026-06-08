@@ -114,6 +114,8 @@ int main(void)
   HAL_TIM_Encoder_Start(&htim2, TIM_CHANNEL_ALL);
   HAL_TIM_Encoder_Start(&htim3, TIM_CHANNEL_ALL);
 
+  HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc_values, 8);
+  HAL_Delay(100); // Chờ 100ms để điện áp dàn mắt hồng ngoại ổn định hoàn toàn
   // 2. Kích nổ cấu trúc luồng FreeRTOS chạy Tĩnh từ tầng App kiến trúc
   App_Core_Init();
 
@@ -193,8 +195,13 @@ void SystemClock_Config(void)
 /* USER CODE BEGIN 4 */
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
     if (GPIO_Pin == B1_Pin) {
-        if (run_flag == 0) { run_flag = 1; inject_error = 0; }
-        else if (run_flag == 1 && inject_error == 0) { inject_error = 1; }
+        if (run_flag == 0) {
+            HAL_GPIO_WritePin(GPIOB, GPIO_PIN_13, GPIO_PIN_SET); // Bật lại IR LED
+            run_flag = 1;
+            inject_error = 0;
+        } else if (run_flag == 1 && inject_error == 0) {
+            inject_error = 1;
+        }
         HAL_GPIO_TogglePin(GPIOA, LD2_Pin);
     }
 }

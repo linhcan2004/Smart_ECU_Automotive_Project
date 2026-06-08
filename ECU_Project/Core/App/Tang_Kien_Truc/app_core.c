@@ -3,9 +3,6 @@
 #include "mpu6500.h"
 #include "line_sensor.h"
 #include "control_pid.h"
-#include "uds_sm.h"
-#include "encoder.h"
-#include "flash_mem.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -50,11 +47,7 @@ static void StartControlTask(void *argument);
 static void StartDiagnosticTask(void *argument);
 
 void App_Core_Init(void) {
-	Flash_Load_Config();
-	Encoder_Init();
-    MPU6500_Init();
-    UDS_Init();
-
+     // MPU6500_Init();
     uartMutexHandle = osMutexNew(&uartMutex_attributes);
     controlQueueHandle = osMessageQueueNew(QUEUE_LEN, QUEUE_ITEM_SIZE, &controlQueue_attributes);
 
@@ -81,23 +74,34 @@ void App_Core_Init(void) {
 }
 
 // TÁC VỤ 1: CRITICAL TASK (Chu kỳ nghiêm ngặt 5ms - An toàn khẩn cấp)
+volatile CarState_t car_state = CAR_STATE_IDLE; // Cấp phát vật lý biến trạng thái xe
+char critical_buf[64]; // Bộ đệm biệt lập riêng cho ngắt khẩn cấp
 void StartCriticalTask(void *argument) {
     uint32_t tickIncrement = pdMS_TO_TICKS(5);
     TickType_t xLastWakeTime = xTaskGetTickCount();
+    uint8_t failsafe_count = 0; // Bộ đếm xác nhận liên tiếp
+
     for(;;) {
-        if (run_flag == 1) {
-            // Tính năng Failsafe: Giám sát liên tục vận tốc góc từ MPU6500
+        if (car_state == CAR_STATE_RUNNING) {
             int16_t gyro_z = Read_Gyro_Z() - gyro_z_offset;
 
-            // Nếu phát hiện xe góc quay biến thiên đột biến (Giả lập va chạm gắt hoặc lật xe)
-            if (gyro_z > 15000 || gyro_z < -15000) {
-                Motor_Drive(0, 0); // Kích hoạt phanh điện tử ghim cứng cụm động cơ lập tức
-                HAL_GPIO_WritePin(GPIOB, GPIO_PIN_13, GPIO_PIN_RESET); // Ngắt nguồn dàn LED hồng ngoại
-                // [Hội đồng chấm điểm đánh giá rất cao phân đoạn xử lý an toàn chủ động này]
+            if (gyro_z > 20000 || gyro_z < -20000) {
+                failsafe_count++;
+                // Chỉ kích hoạt khi 3 mẫu LIÊN TIẾP đều vượt ngưỡng (15ms)
+                // Loại bỏ hoàn toàn nhiễu đơn lẻ
+                if (failsafe_count >= 3) {
+                    Motor_Drive(0, 0);
+                    // dừng motor
+                    run_flag = 0;
+                    failsafe_count = 0;
+                    sprintf(uart_buf, "[CRITICAL] FAILSAFE! gyro=%d\r\n", gyro_z);
+                    HAL_UART_Transmit(&huart6, (uint8_t*)uart_buf, strlen(uart_buf), 50);
+                }
+            } else {
+                failsafe_count = 0; // Reset nếu mẫu bình thường
             }
         }
 
-        // ĐIỂM DANH: Bật Bit 0 (0x01) chứng minh Task 5ms vẫn sống
         task_health_mask |= (1 << 0);
         vTaskDelayUntil(&xLastWakeTime, tickIncrement);
     }
@@ -112,6 +116,7 @@ void StartControlTask(void *argument) {
     static int hist_left[5]  = {0, 0, 0, 0, 0};
     static int hist_right[5] = {0, 0, 0, 0, 0};
     int received_speed = 0; // Biến tạm lưu tốc độ đọc ra từ Queue
+
 
     for(;;) {
     	// KHỐI GIẢ LẬP LỖI (FAILURE INJECTION PORT)
@@ -135,15 +140,17 @@ void StartControlTask(void *argument) {
 
             // KHỐI KHỞI ĐẦU: TỰ ĐỘNG HỌC SA BÀN (Auto Calibration)
             if (is_calibrated == 0) {
+            	car_state = CAR_STATE_CALIBRATE;
                 Auto_Calibration();
                 is_calibrated = 1;
                 run_flag = 0;
+                car_state = CAR_STATE_IDLE;
                 Reset_PID();
+                continue;
             } else {
 
             Refresh_ADC();
             int position = Read_Position();
-
             if (position != -1) {
                 // Đẩy lùi lịch sử trạng thái (Shift Register)
                 for (int i = 4; i > 0; i--) {
@@ -157,20 +164,27 @@ void StartControlTask(void *argument) {
 
             // KHỐI XỬ LÝ NGÃ RẼ (Đã thay thế hoàn toàn HAL_Delay bằng osDelay để nhường CPU)
             if (position == -1) {
+            	car_state = CAR_STATE_TURNING;
                 int total_left  = hist_left[2] + hist_left[3] + hist_left[4];
                 int total_right = hist_right[2] + hist_right[3] + hist_right[4];
                 int turn_direction = (total_left > total_right) ? -1 : ((total_right > total_left) ? 1 : -1);
 
                 int turn_speed = base_speed * 0.5;
                 if (turn_speed < 200) turn_speed = 200;
+                sprintf(uart_buf, "TURN: base=%d turn_speed=%d dir=%d\r\n",
+                            base_speed, turn_speed, turn_direction);
+                HAL_UART_Transmit(&huart6, (uint8_t*)uart_buf, strlen(uart_buf), 50);
 
                 if (turn_direction == -1) Motor_Drive(-turn_speed, turn_speed); // Xoay compa trái
                 else                      Motor_Drive(turn_speed, -turn_speed); // Xoay compa phải
 
                 osDelay(30); // osDelay giúp nhường quyền CPU cho tác vụ khác thay vì đứng chết đóng băng chip
 
+                uint8_t found_line_spin = 0; // Cờ kiểm soát bẫy lỗi ngã rẽ
                 uint32_t spin_start = HAL_GetTick();
+
                 while (HAL_GetTick() - spin_start < 3000) {
+                	task_health_mask |= (1 << 1);
                     Refresh_ADC();
                     // Điều kiện bắt lại tâm vạch đường mới
                     if ((adc_values[2] > 3500 && adc_values[3] > 3500) || (adc_values[4] > 3500 && adc_values[5] > 3500)) {
@@ -180,6 +194,7 @@ void StartControlTask(void *argument) {
 
                         Motor_Drive(0, 0);
                         osDelay(80);
+                        found_line_spin = 1;
                         break;
                     }
                     osDelay(2); // Tránh loop cạn kiệt CPU của task thấp hơn
@@ -188,9 +203,18 @@ void StartControlTask(void *argument) {
                 for(int k = 0; k < 5; k++) {
                 	hist_left[k] = 0; hist_right[k] = 0;
                 	}
-                } else {
 
+                if (found_line_spin == 1) {
+                                        car_state = CAR_STATE_RUNNING; // Bắt line thành công -> Kích hoạt lại Failsafe đường thẳng
+                                    } else {
+                                        Motor_Drive(0, 0);
+                                        run_flag = 0;
+                                        car_state = CAR_STATE_IDLE;    // Thất bại -> Dừng xe khẩn cấp, đứng im chờ cứu hộ
+                                    }
+
+                } else {
 						// KHỐI THUẬT TOÁN PID BÁM LINE ĐƯỜNG THẲNG
+                		car_state = CAR_STATE_RUNNING;
 						error = position - 3500;
 						int current_base = (error > 2500 || error < -2500) ? (int)(base_speed * 0.7f) : base_speed;
 
@@ -221,6 +245,7 @@ void StartControlTask(void *argument) {
                 }
             }
         } else {
+        	car_state = CAR_STATE_IDLE;
             Motor_Drive(0, 0);
         }
 
@@ -250,10 +275,10 @@ void StartDiagnosticTask(void *argument) {
             // 1. Đóng gói gửi gói tin giám sát Telemetry lên máy tính Dashboard
             sprintf(uart_buf, "Pos=%d Err=%d PID=%d L=%ld R=%ld Gyro=%d\r\n",
                     position, error, PID_value, enc_left_count, enc_right_count, gyro_p);
-            HAL_UART_Transmit(&huart6, (uint8_t*)uart_buf, strlen(uart_buf), 50);
+            HAL_UART_Transmit(&huart6, (uint8_t*)uart_buf, strlen(uart_buf), 60);
 
-            // 2. LÕI PHÂN TÍCH CÚ PHÁP UDS:
-            UDS_Process();
+            // 2.Thành viên 02 sau này sẽ nhúng lõi phân tích cú pháp lệnh UDS ISO 14229 tại đây để nhận lệnh chẩn đoán từ máy tính và trả về dữ liệu tương ứng qua UART.
+            // ...
 
             osMutexRelease(uartMutexHandle); // Giải phóng khóa sau khi truyền tải xong
         }
