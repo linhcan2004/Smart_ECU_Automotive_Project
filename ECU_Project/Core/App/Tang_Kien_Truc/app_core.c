@@ -85,7 +85,7 @@ void StartCriticalTask(void *argument) {
         if (car_state == CAR_STATE_RUNNING) {
             int16_t gyro_z = Read_Gyro_Z() - gyro_z_offset;
 
-            if (gyro_z > 15000 || gyro_z < -15000) {
+            if (gyro_z > 20000 || gyro_z < -20000) {
                 failsafe_count++;
                 // Chỉ kích hoạt khi 3 mẫu LIÊN TIẾP đều vượt ngưỡng (15ms)
                 // Loại bỏ hoàn toàn nhiễu đơn lẻ
@@ -275,7 +275,7 @@ void StartDiagnosticTask(void *argument) {
             // 1. Đóng gói gửi gói tin giám sát Telemetry lên máy tính Dashboard
             sprintf(uart_buf, "Pos=%d Err=%d PID=%d L=%ld R=%ld Gyro=%d\r\n",
                     position, error, PID_value, enc_left_count, enc_right_count, gyro_p);
-            HAL_UART_Transmit(&huart6, (uint8_t*)uart_buf, strlen(uart_buf), 50);
+            HAL_UART_Transmit(&huart6, (uint8_t*)uart_buf, strlen(uart_buf), 60);
 
             // 2.Thành viên 02 sau này sẽ nhúng lõi phân tích cú pháp lệnh UDS ISO 14229 tại đây để nhận lệnh chẩn đoán từ máy tính và trả về dữ liệu tương ứng qua UART.
             // ...

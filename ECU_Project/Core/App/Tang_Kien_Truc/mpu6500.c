@@ -29,7 +29,6 @@ void MPU6500_Init(void) {
         // --- BẪY LỖI AN TOÀN CHỦ ĐỘNG ---
         mpu_status = 0;    // Đánh dấu cảm biến đang bị lỗi/rơi dây
         gyro_z_offset = 0; // Đặt offset bằng 0 để tránh tính toán sai lệch
-        // Hệ thống không bị treo, chip tiếp tục thoát ra ngoài để khởi động FreeRTOS!
     }
 }
 

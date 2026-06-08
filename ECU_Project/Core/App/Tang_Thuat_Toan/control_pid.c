@@ -7,7 +7,7 @@ int error = 0, last_error = 0;
 int P = 0, I = 0, PID_value = 0;
 float filtered_D = 0.0f;
 float Kp = 0.1f, Ki = 0.0f, Kd = 1.0f;
-int base_speed = 350, max_speed = 999;
+int base_speed = 320, max_speed = 999;
 
 void Reset_PID(void) {
     error      = 0;
