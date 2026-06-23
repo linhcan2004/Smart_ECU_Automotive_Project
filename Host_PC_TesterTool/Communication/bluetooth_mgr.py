@@ -60,7 +60,7 @@ class BluetoothManager:
                 await asyncio.sleep(0.1)
                 
         except Exception as e:
-            print(f"❌ Không thể kết nối BLE phần cứng: {e}")
+            print(f"Không thể kết nối BLE phần cứng: {e}")
             self.connected = False
             self.connected_event.set()
 
@@ -116,14 +116,26 @@ class BluetoothManager:
     def receive_uds_packet(self):
         """ Hàm hứng gói tin phản hồi UDS nhị phân """
         try:
-            # Bốc byte đầu tiên ra xem độ dài
+            # 1. Đọc byte đầu tiên trong hàng đợi với thời gian chờ 0.5s
             first_byte = self.rx_queue.get(timeout=0.5)
+            if first_byte >= 64:
+                return None # Thoát ra ngay để nhường luồng đọc byte tiếp theo, TUYỆT ĐỐI không xóa sạch queue.
+
+            # Nếu byte đầu tiên < 64 -> Đích thị là byte độ dài (Length) của gói UDS nhị phân chuẩn!
             packet = bytearray([first_byte])
-            
             total_len = first_byte
-            if 0 < total_len < 64:
+            
+            # Tiến hành bốc chính xác nốt (Length - 1) byte còn lại đang xếp hàng phía sau
+            if total_len > 1:
                 for _ in range(total_len - 1):
-                    packet.append(self.rx_queue.get(timeout=0.5))
+                    try:
+                        packet.append(self.rx_queue.get(timeout=0.1))
+                    except queue.Empty:
+                        # Phòng trường hợp gói tin bị mất mát byte giữa đường
+                        return None
+            
+            print(f"Nhận thành công gói UDS nhị phân từ xe: {packet.hex().upper()}")
             return bytes(packet)
+            
         except queue.Empty:
             return None
