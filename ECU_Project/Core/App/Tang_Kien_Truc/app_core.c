@@ -6,16 +6,12 @@
 #include <stdio.h>
 #include <string.h>
 
-extern UART_HandleTypeDef huart6;
 // Cấp phát vật lý các biến hệ thống chính
 volatile uint8_t run_flag = 0;
 volatile uint8_t inject_error = 0;
+char uart_buf[150] = {0};
 uint32_t last_uart_time = 0;
 volatile uint8_t task_health_mask = 0;
-volatile uint8_t uds_rx_buf[64] = {0};
-volatile uint8_t uds_rx_index = 0;
-volatile uint8_t uds_packet_ready = 0;
-uint8_t rx_byte = 0;
 
 // Cấu hình kích thước bộ nhớ tĩnh FreeRTOS
 #define CRITICAL_STACK_SIZE    128
@@ -75,7 +71,6 @@ void App_Core_Init(void) {
         .priority = (osPriority_t) osPriorityBelowNormal,
     };
     diagnosticTaskHandle = osThreadNew(StartDiagnosticTask, NULL, &diagnostic_attributes);
-    HAL_UART_Receive_IT(&huart6, &rx_byte, 1);
 }
 
 // TÁC VỤ 1: CRITICAL TASK (Chu kỳ nghiêm ngặt 5ms - An toàn khẩn cấp)
@@ -85,13 +80,12 @@ void StartCriticalTask(void *argument) {
     uint32_t tickIncrement = pdMS_TO_TICKS(5);
     TickType_t xLastWakeTime = xTaskGetTickCount();
     uint8_t failsafe_count = 0; // Bộ đếm xác nhận liên tiếp
-    char critical_local_buf[64];
 
     for(;;) {
         if (car_state == CAR_STATE_RUNNING) {
             int16_t gyro_z = Read_Gyro_Z() - gyro_z_offset;
 
-            if (gyro_z > 28000 || gyro_z < -28000) {
+            if (gyro_z > 20000 || gyro_z < -20000) {
                 failsafe_count++;
                 // Chỉ kích hoạt khi 3 mẫu LIÊN TIẾP đều vượt ngưỡng (15ms)
                 // Loại bỏ hoàn toàn nhiễu đơn lẻ
@@ -177,9 +171,9 @@ void StartControlTask(void *argument) {
 
                 int turn_speed = base_speed * 0.5;
                 if (turn_speed < 200) turn_speed = 200;
-                // sprintf(uart_buf, "TURN: base=%d turn_speed=%d dir=%d\r\n",
-                //             base_speed, turn_speed, turn_direction);
-                // HAL_UART_Transmit(&huart6, (uint8_t*)uart_buf, strlen(uart_buf), 50);
+                sprintf(uart_buf, "TURN: base=%d turn_speed=%d dir=%d\r\n",
+                            base_speed, turn_speed, turn_direction);
+                HAL_UART_Transmit(&huart6, (uint8_t*)uart_buf, strlen(uart_buf), 50);
 
                 if (turn_direction == -1) Motor_Drive(-turn_speed, turn_speed); // Xoay compa trái
                 else                      Motor_Drive(turn_speed, -turn_speed); // Xoay compa phải
@@ -265,26 +259,18 @@ void StartControlTask(void *argument) {
 void StartDiagnosticTask(void *argument) {
     uint32_t tickIncrement = pdMS_TO_TICKS(100);
     TickType_t xLastWakeTime = xTaskGetTickCount();
-    char diag_local_buf[128];
 
     uint32_t simulation_timer = 0;
 	int simulated_target_speed = 450;
     for(;;) {
         // Đọc dữ liệu phản hồi từ phần cứng xe cũ
-        Encoder_Update();
+        enc_left_count  = (int32_t)__HAL_TIM_GET_COUNTER(&htim2);
+        enc_right_count = (int32_t)__HAL_TIM_GET_COUNTER(&htim3);
         int16_t gyro_p = Read_Gyro_Z() - gyro_z_offset;
         int position = Read_Position();
 
-        if (uds_packet_ready == 1) {
-            
-            uint8_t test_tx[3] = {0x03, 0x50, 0x03};
-            HAL_UART_Transmit(&huart6, test_tx, 3, 50);
-            
-            uint8_t len = uds_rx_buf[0];
-            uint8_t sid = uds_rx_buf[1];
-
         // CHIẾM ĐỘC CHIẾM KHÓA MUTEX TRƯỚC KHI XUẤT ĐỮ LIỆU QUA CỔNG SERIAL
-        if (osMutexAcquire(uartMutexHandle, pdMS_TO_TICKS(10)) == osOK) {
+        if (osMutexAcquire(uartMutexHandle, osWaitForever) == osOK) {
 
             // 1. Đóng gói gửi gói tin giám sát Telemetry lên máy tính Dashboard
             sprintf(uart_buf, "Pos=%d Err=%d PID=%d L=%ld R=%ld Gyro=%d\r\n",
@@ -315,32 +301,16 @@ void StartDiagnosticTask(void *argument) {
         if (task_health_mask == 0x07) {
         	HAL_IWDG_Refresh(&hiwdg);  // Thực hiện lệnh "Nuôi chó" - gỡ bom phần cứng an toàn
         	task_health_mask = 0;     // Xóa mặt nạ về 0 để các Task làm lại chu kỳ điểm danh mới
-        } 
+        } else {
         // Nếu thiếu bất kỳ cờ nào (có Task bị treo ngầm)=> KHÔNG NUÔI CHÓ.
         // Trong vòng tối đa 500ms, IWDG phần cứng sẽ tự động ÉP ECU RESET để cứu xe.
+        }
         vTaskDelayUntil(&xLastWakeTime, tickIncrement);
     }
 }
-
-void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
-    if (huart->Instance == USART6) {
-        
-        if (__HAL_UART_GET_FLAG(huart, UART_FLAG_ORE)) {
-            __HAL_UART_CLEAR_FLAG(huart, UART_FLAG_ORE);
-        }
-        if (__HAL_UART_GET_FLAG(huart, UART_FLAG_NE)) { // Noise Error
-            __HAL_UART_CLEAR_FLAG(huart, UART_FLAG_NE);
-        }
-
-        if (uds_packet_ready == 0) {
-            uds_rx_buf[uds_rx_index++] = rx_byte;
-            
-            if (uds_rx_index >= 3) {
-                uds_packet_ready = 1; // Kích nổ xử lý ngay, không chờ đợi vô hạn
-            }
-        }
-        
-        // Tiếp tục kích hoạt lại ngắt nhận byte tiếp theo
-        HAL_UART_Receive_IT(&huart6, &rx_byte, 1);
-    }
-}
+// Giả sử mảng sensor[8] chứa giá trị số (0 hoặc 1) của 8 mắt đọc
+printf("Pos=%d Err=%d SENSORS=%d%d%d%d%d%d%d%d\n", 
+       position, 
+       error, 
+       sensor[0], sensor[1], sensor[2], sensor[3], 
+       sensor[4], sensor[5], sensor[6], sensor[7]);

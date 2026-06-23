@@ -1,6 +1,6 @@
 import asyncio
 import threading
-import queue
+import time
 from bleak import BleakClient
 
 class BluetoothManager:
@@ -8,17 +8,19 @@ class BluetoothManager:
         self.client = None
         self.loop = None
         self.thread = None
-        self.rx_queue = queue.Queue() # Hộp thư chờ chứa dữ liệu từ xe gửi lên
+        self.rx_buffer = bytearray()  # Bộ nhớ đệm chung chứa dữ liệu nhận được từ xe
+        self.rx_lock = threading.Lock()
         self.mac_address = None
         self.connected = False
         
-        # UUID kênh truyền nhận đặc hiệu của con xe cụ cung cấp
+        # UUID kênh truyền nhận đặc biệt của con xe cụ cung cấp
         self.UART_UUID = "0000ffe1-0000-1000-8000-00805f9b34fb"
 
     def connect(self, mac_address):
         """ Hàm kết nối đồng bộ gọi từ Giao diện cũ """
         self.mac_address = mac_address
-        self.rx_queue = queue.Queue() # Làm sạch hộp thư
+        with self.rx_lock:
+            self.rx_buffer.clear()
         self.connected_event = threading.Event()
         
         # Kích hoạt một luồng chạy ngầm độc lập dành riêng cho Asyncio BLE
@@ -60,28 +62,32 @@ class BluetoothManager:
                 await asyncio.sleep(0.1)
                 
         except Exception as e:
-            print(f"Không thể kết nối BLE phần cứng: {e}")
+            print(f"❌ Không thể kết nối BLE phần cứng: {e}")
             self.connected = False
             self.connected_event.set()
 
     def _handle_ble_rx(self, sender, data):
-        """ Mỗi khi xe bắn gói tin về, hàm này tự đút từng byte vào hộp thư """
-        for byte in data:
-            self.rx_queue.put(byte)
+        """ Mỗi khi xe bắn gói tin về, hàm này đệm dữ liệu vào bộ nhớ chung """
+        with self.rx_lock:
+            self.rx_buffer.extend(data)
 
     def read_raw_telemetry(self):
         """ 🌟 HÀM BỔ SUNG: Đọc chuỗi chữ Telemetry thô (main.py đang gọi hàm này) """
         try:
-            if self.rx_queue.empty():
-                return ""
-            
-            data_bytes = bytearray()
-            # Hút sạch các ký tự chữ đang nằm trong hộp thư chờ ra để dịch thành text
-            while not self.rx_queue.empty():
-                data_bytes.append(self.rx_queue.get_nowait())
-                
-            return data_bytes.decode('utf-8', errors='ignore')
-        except Exception as e:
+            with self.rx_lock:
+                # Nhìn nhanh xem có chuỗi Telemetry trong bộ nhớ đệm không
+                if not self.rx_buffer:
+                    return ""
+                data = bytes(self.rx_buffer)
+
+            # Chỉ cố gắng giải mã chuỗi Telemetry bằng UTF-8, nếu không phải Telemetry thì bỏ qua
+            text = data.decode('utf-8', errors='ignore')
+            lines = text.splitlines()
+            for line in reversed(lines):
+                if line.startswith("Pos="):
+                    return line.strip()
+            return ""
+        except Exception:
             return ""
 
     def disconnect(self):
@@ -105,6 +111,36 @@ class BluetoothManager:
             # Chuyển lệnh đồng bộ từ GUI thành lệnh async phóng xuống chip
             asyncio.run_coroutine_threadsafe(self._async_write(packet_bytes), self.loop)
 
+    def receive_uds_packet(self, timeout=2.5):
+        """ Hàm hứng gói tin phản hồi UDS nhị phân (Đã thêm Global Timeout và chống nhiễu) """
+        start_time = time.time()
+        try:
+            while time.time() - start_time < timeout:
+                packet = self._try_extract_uds_packet()
+                if packet:
+                    return packet
+                time.sleep(0.05)
+        except Exception as e:
+            print(f"Lỗi khi đọc UDS: {e}")
+        return None
+
+    def _try_extract_uds_packet(self):
+        """Cố gắng trích gói UDS hợp lệ từ bộ đệm nhận chung"""
+        with self.rx_lock:
+            if len(self.rx_buffer) < 2:
+                return None
+            total_len = self.rx_buffer[0]
+            if total_len <= 1 or total_len > len(self.rx_buffer):
+                return None
+            packet = bytes(self.rx_buffer[:total_len])
+            sid = packet[1]
+            valid_sids = [0x7F, 0x50, 0x67, 0x62, 0x6E, 0x51]
+            if sid in valid_sids:
+                del self.rx_buffer[:total_len]
+                return packet
+            del self.rx_buffer[0]
+        return None
+
     async def _async_write(self, data):
         if self.client and self.client.is_connected:
             try:
@@ -112,30 +148,3 @@ class BluetoothManager:
                 await self.client.write_gatt_char(self.UART_UUID, data)
             except Exception as e:
                 print(f"Lỗi gửi gói tin BLE: {e}")
-
-    def receive_uds_packet(self):
-        """ Hàm hứng gói tin phản hồi UDS nhị phân """
-        try:
-            # 1. Đọc byte đầu tiên trong hàng đợi với thời gian chờ 0.5s
-            first_byte = self.rx_queue.get(timeout=0.5)
-            if first_byte >= 64:
-                return None # Thoát ra ngay để nhường luồng đọc byte tiếp theo, TUYỆT ĐỐI không xóa sạch queue.
-
-            # Nếu byte đầu tiên < 64 -> Đích thị là byte độ dài (Length) của gói UDS nhị phân chuẩn!
-            packet = bytearray([first_byte])
-            total_len = first_byte
-            
-            # Tiến hành bốc chính xác nốt (Length - 1) byte còn lại đang xếp hàng phía sau
-            if total_len > 1:
-                for _ in range(total_len - 1):
-                    try:
-                        packet.append(self.rx_queue.get(timeout=0.1))
-                    except queue.Empty:
-                        # Phòng trường hợp gói tin bị mất mát byte giữa đường
-                        return None
-            
-            print(f"Nhận thành công gói UDS nhị phân từ xe: {packet.hex().upper()}")
-            return bytes(packet)
-            
-        except queue.Empty:
-            return None

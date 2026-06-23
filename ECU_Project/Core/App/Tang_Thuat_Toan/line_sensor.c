@@ -68,16 +68,9 @@ int Read_Position(void) {
     black_count = 0; 
 
     for (int i = 0; i < 8; i++) {
-        // Chuẩn hóa giá trị ADC thực tế theo dải min-max đã calibration của từng mắt đọc
-        uint32_t calibrated_value = 0;
-        if (adc_values[i] > cal_min[i]) {
-            calibrated_value = (uint32_t)(adc_values[i] - cal_min[i]) * 1000 / (cal_max[i] - cal_min[i]);
-        }
-        
-        // Ngưỡng nhận diện vạch đen sau khi chuẩn hóa luôn là 500 (tương đương 50% độ đen)
-        if (calibrated_value > 500) {
-            sum          += calibrated_value;
-            sum_weighted += calibrated_value * (uint32_t)(i * 1000);
+        if (adc_values[i] > 3500) {
+            sum          += (uint32_t)adc_values[i];
+            sum_weighted += (uint32_t)adc_values[i] * (uint32_t)(i * 1000);
             black_count++; 
         }
     }

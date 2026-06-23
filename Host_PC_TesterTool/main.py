@@ -7,7 +7,7 @@ class AutomotiveApp:
     def __init__(self, window):
         self.window = window
         self.window.title("HỆ THỐNG GIÁM SÁT & CHẨN ĐOÁN ECU Ô TÔ SMART LINE-TRACKING - VNU UET 2026")
-        self.window.geometry("650x450")
+        self.window.geometry("680x580")
         
         # Khởi tạo lõi kết nối phần cứng
         self.bt = BluetoothManager()
@@ -15,9 +15,9 @@ class AutomotiveApp:
         # Tạo khu vực kết nối nhanh cổng COM
         conn_frame = tk.Frame(self.window, pady=10)
         conn_frame.pack(fill="x")
-        tk.Label(conn_frame, text="Nhập cổng Bluetooth COM (Ví dụ: COM4):", font=("Arial", 10)).pack(side="left", padx=10)
+        tk.Label(conn_frame, text="Nhập địa chỉ MAC HC-06:", font=("Consolas", 11)).pack(side="left", padx=10)
         self.ent_port = tk.Entry(conn_frame, width=10)
-        self.ent_port.insert(0, "COM4")
+        self.ent_port.insert(0, "AF:6C:03:4F:EB:DB")
         self.ent_port.pack(side="left", padx=5)
         
         self.btn_connect = tk.Button(conn_frame, text="KẾT NỐI XE", bg="green", fg="white", command=self.toggle_connection)
@@ -35,16 +35,21 @@ class AutomotiveApp:
     def toggle_connection(self):
         if not self.is_connected:
             port = self.ent_port.get()
+            self.pnl_dashboard.log_event(f"⏳ Đang kết nối tới MAC: {port}...")
+            
             if self.bt.connect(port):
                 self.is_connected = True
                 self.btn_connect.config(text="NGẮT KẾT NỐI", bg="red")
-                self.listen_telemetry_loop() # Kích hoạt vòng lặp hứng dữ liệu
+                self.pnl_dashboard.log_event("🟢 Đã kết nối Bluetooth thành công!")
+                self.listen_telemetry_loop()
             else:
-                tk.messagebox.showerror("Thất bại", f"Không thể mở cổng {port}. Hãy kiểm tra lại công tắc nguồn của xe hoặc kết nối Bluetooth Bluetooth Pair.")
+                self.pnl_dashboard.log_event("❌ Lỗi: Không thể kết nối tới xe!")
+                tk.messagebox.showerror("Thất bại", f"Không thể mở kết nối {port}.")
         else:
             self.bt.disconnect()
             self.is_connected = False
             self.btn_connect.config(text="KẾT NỐI XE", bg="green")
+            self.pnl_dashboard.log_event("⚪ Đã ngắt kết nối an toàn.")
 
     def listen_telemetry_loop(self):
         """Vòng lặp ngầm liên tục quét kiểm tra dữ liệu từ xe gửi lên"""
